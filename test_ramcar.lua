@@ -118,7 +118,7 @@ addCommandHandler("ramcar", function(player, cmd, arg)
     setElementData(veh, "next", next.id)
     -- Disable the core traffic AI for this vehicle so the rammer script can fully control it.
     -- This flag is checked by the traffic client/server (small patch applied to core files).
-    setElementData(veh, "traffic_enabled", false, false)
+    setElementData(veh, "traffic_enabled", false)
 
     -- Notify clients the same way the traffic spawner does so the client-side pathfollowing initializes
     -- Keep the same call style used in the resource so handlers pick it up
@@ -170,20 +170,20 @@ addCommandHandler("ramcar", function(player, cmd, arg)
 
         -- publish hit position for client debug visuals (will be nil when nothing hit)
         if hx and hy and hz then
-            setElementData(veh, "rammer_hit_x", hx, false)
-            setElementData(veh, "rammer_hit_y", hy, false)
-            setElementData(veh, "rammer_hit_z", hz, false)
-            setElementData(veh, "rammer_hashit", true, false)
+            setElementData(veh, "rammer_hit_x", hx)
+            setElementData(veh, "rammer_hit_y", hy)
+            setElementData(veh, "rammer_hit_z", hz)
+            setElementData(veh, "rammer_hashit", true)
         else
-            setElementData(veh, "rammer_hit_x", false, false)
-            setElementData(veh, "rammer_hit_y", false, false)
-            setElementData(veh, "rammer_hit_z", false, false)
-            setElementData(veh, "rammer_hashit", false, false)
+            setElementData(veh, "rammer_hit_x", false)
+            setElementData(veh, "rammer_hit_y", false)
+            setElementData(veh, "rammer_hit_z", false)
+            setElementData(veh, "rammer_hashit", false)
         end
 
         -- publish some state flags so clients can show debug info
-        setElementData(veh, "rammer_pursuing", info.pursuing == true, false)
-        setElementData(veh, "rammer_routing", info.routingToLast == true, false)
+        setElementData(veh, "rammer_pursuing", info.pursuing == true)
+        setElementData(veh, "rammer_routing", info.routingToLast == true)
 
         local controls = {
             vehicle_left = false,
@@ -475,7 +475,7 @@ addCommandHandler("ramtoggle", function(player, cmd, arg)
     end
     local cur = getElementData(best, "traffic_enabled")
     local new = not (cur == true)
-    setElementData(best, "traffic_enabled", new, false)
+    setElementData(best, "traffic_enabled", new)
     outputChatBox("Rammer traffic_enabled set to "..tostring(new), player)
     if new then
         -- resume traffic AI in a safe way
