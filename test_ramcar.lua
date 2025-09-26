@@ -69,12 +69,12 @@ addCommandHandler("ramcar", function(player, cmd, arg)
     end
 
     local px, py, pz = getElementPosition(player)
-    local node = pathsNodeFindClosest(px, py, pz)
+    local node = pathsNodeFindClosest(px, py, pz, {allowParking = false})
     if not node then
         outputChatBox("No nearby node found.", player)
         return
     end
-    local next = pathsFindNextNode(node.id)
+    local next = pathsFindNextNode(node.id, nil, {allowParking = false})
     if not next then
         outputChatBox("No next node found.", player)
         return
@@ -284,9 +284,9 @@ addCommandHandler("ramcar", function(player, cmd, arg)
             -- aggressive pursuit: if we've lost LOS previously and are routing to last known, ensure the client re-forms path toward that last-known node
             if (not hasLOS) and info.lastKnown and not info.routingToLast then
                 local lk = info.lastKnown
-                local nodeNear = pathsNodeFindClosest(lk.x, lk.y, lk.z)
+                local nodeNear = pathsNodeFindClosest(lk.x, lk.y, lk.z, {allowParking = false})
                 if nodeNear then
-                    local nextNode = pathsFindNextNode(nodeNear.id)
+                    local nextNode = pathsFindNextNode(nodeNear.id, nil, {allowParking = false})
                     if nextNode then
                         setElementData(veh, "next", nextNode.id)
                         -- trigger client to initialize path following toward this node
