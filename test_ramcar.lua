@@ -7,7 +7,8 @@ local RAMMER_BY_OWNER = {}
 -- NOTE: If Bobcat model ID differs for your server, change BOBcat_MODEL below.
 local BOBCAT_MODEL = 422 -- Bobcat model ID
 
-local DEFAULT_RAM_DISTANCE = 500 -- start trying to ram when closer than this (increased)
+local DEFAULT_RAM_DISTANCE = 500 -- base distance before applying detection multiplier
+local DETECTION_RADIUS_MULTIPLIER = 2.5 -- increase detection/scan radius by 150%
 local LOS_CHECK_HEIGHT = 1.2
 local LOS_EXTRA_HEIGHTS = {0.8, 1.5} -- additional heights for fallback LOS checks to better handle hills
 local UPDATE_INTERVAL = 200 -- ms
@@ -28,6 +29,9 @@ local function cleanupRammer(veh)
     end
     if info and info.owner and RAMMER_BY_OWNER[info.owner] == veh then
         RAMMER_BY_OWNER[info.owner] = nil
+    end
+    if isElement(veh) then
+        setElementData(veh, "rammer_target", false)
     end
     RAMMERS[veh] = nil
 end
@@ -57,6 +61,7 @@ end)
 addCommandHandler("ramcar", function(player, cmd, arg)
     -- arg can be a distance override
     local ramDist = tonumber(arg) or DEFAULT_RAM_DISTANCE
+    local effectiveRamDist = ramDist * DETECTION_RADIUS_MULTIPLIER
 
     local existing = RAMMER_BY_OWNER[player]
     if existing then
@@ -101,6 +106,7 @@ addCommandHandler("ramcar", function(player, cmd, arg)
 
     -- mark this vehicle so clients can show debug visuals
     setElementData(veh, "rammer_test", true)
+    setElementData(veh, "rammer_target", player)
 
     setVehicleColor(veh, 255, 255, 0) -- fuschia for visibility
 
@@ -125,7 +131,7 @@ addCommandHandler("ramcar", function(player, cmd, arg)
     triggerClientEvent(VEH_CREATED, ped, node.id, next.id)
 
     -- Track this rammer and start update timer
-    RAMMERS[veh] = { owner = player, target = player, ramDist = ramDist, lastKnown = nil, avoiding = false, uTurning = false, pursuing = false, routingToLast = false, stuckSince = nil, lastStuckTurnLeft = nil, lastAvoidTurnLeft = false }
+    RAMMERS[veh] = { owner = player, target = player, ramDist = effectiveRamDist, lastKnown = nil, avoiding = false, uTurning = false, pursuing = false, routingToLast = false, stuckSince = nil, lastStuckTurnLeft = nil, lastAvoidTurnLeft = false }
     RAMMER_BY_OWNER[player] = veh
 
     RAMMERS[veh].timer = setTimer(function()
@@ -427,7 +433,7 @@ addCommandHandler("ramcar", function(player, cmd, arg)
         end
     end, UPDATE_INTERVAL, 0)
 
-    outputChatBox("Rammer spawned. It will try to reach and ram you if within "..tostring(ramDist).." units and line-of-sight.", player)
+    outputChatBox("Rammer spawned. It will try to reach and ram you if within "..tostring(effectiveRamDist).." units and line-of-sight.", player)
 end)
 
 -- Helper: resume traffic AI for a vehicle in a safe way by choosing the node

@@ -2,9 +2,21 @@
 -- Client-side visuals for the rammer test: marker above rammer and draw LOS lines to debug what the rammer "sees".
 
 local LOS_HEIGHT = 0.6 -- lower height so ray originates nearer the vehicle center
-local RAY_LENGTH = 30
+local RAY_LENGTH = 75 -- increased by 150% to match extended detection radius
 local SIDE_OFFSET = 2.2
 local SCAN_FREQ = 1.5 -- rotations per second (full 360 sweep every ~0.66 seconds)
+
+local function normalize(x, y, z)
+    local len = math.sqrt(x * x + y * y + z * z)
+    if len > 0 then
+        return x / len, y / len, z / len, len
+    end
+    return 0, 0, 0, 0
+end
+
+local function cross(ax, ay, az, bx, by, bz)
+    return ay * bz - az * by, az * bx - ax * bz, ax * by - ay * bx
+end
 
 addEventHandler("onClientRender", root, function()
     for i, veh in ipairs(getElementsByType('vehicle', getResourceRootElement(), true)) do
@@ -18,9 +30,39 @@ addEventHandler("onClientRender", root, function()
 
             -- draw the LOS ray(s) the vehicle would be using
             local mx = getElementMatrix(veh)
-            -- compute start and end using resource helper getMatrixOffsets so axes match server code
+            local pursuing = getElementData(veh, 'rammer_pursuing') == true
+            local targetElement = getElementData(veh, 'rammer_target')
+            if not isElement(targetElement) then
+                targetElement = getLocalPlayer()
+            end
+            -- compute start point once so we can reuse it for all debug lines
             local sxw, syw, szw = getMatrixOffsets(mx, 0, 0, LOS_HEIGHT)
-            local txw, tyw, tzw = getMatrixOffsets(mx, 0, RAY_LENGTH, LOS_HEIGHT)
+            local baseForwardX, baseForwardY, baseForwardZ = normalize(mx[2][1], mx[2][2], mx[2][3])
+            local baseRightX, baseRightY, baseRightZ = normalize(mx[1][1], mx[1][2], mx[1][3])
+            local baseUpX, baseUpY, baseUpZ = normalize(mx[3][1], mx[3][2], mx[3][3])
+
+            local activeForwardX, activeForwardY, activeForwardZ = baseForwardX, baseForwardY, baseForwardZ
+            if pursuing and isElement(targetElement) then
+                local px, py, pz = getElementPosition(targetElement)
+                local dirX = px - sxw
+                local dirY = py - syw
+                local dirZ = (pz + LOS_HEIGHT) - szw
+                local nx, ny, nz, len = normalize(dirX, dirY, dirZ)
+                if len > 0 then
+                    activeForwardX, activeForwardY, activeForwardZ = nx, ny, nz
+                end
+            end
+
+            local activeRightX, activeRightY, activeRightZ = cross(baseUpX, baseUpY, baseUpZ, activeForwardX, activeForwardY, activeForwardZ)
+            local rx, ry, rz, rlen = normalize(activeRightX, activeRightY, activeRightZ)
+            if rlen == 0 then
+                rx, ry, rz = baseRightX, baseRightY, baseRightZ
+            end
+            activeRightX, activeRightY, activeRightZ = rx, ry, rz
+
+            local txw = sxw + activeForwardX * RAY_LENGTH
+            local tyw = syw + activeForwardY * RAY_LENGTH
+            local tzw = szw + activeForwardZ * RAY_LENGTH
             local sscreenX, sscreenY = getScreenFromWorldPosition(sxw, syw, szw)
             local tscreenX, tscreenY = getScreenFromWorldPosition(txw, tyw, tzw)
             if sscreenX and sscreenY and tscreenX and tscreenY then
@@ -28,8 +70,13 @@ addEventHandler("onClientRender", root, function()
             end
 
             -- side rays (frustum) computed with lateral offset and shorter forward length
-            local leftxw, leftyw, leftzw = getMatrixOffsets(mx, -SIDE_OFFSET, RAY_LENGTH * 0.7, LOS_HEIGHT)
-            local rightxw, rightyw, rightzw = getMatrixOffsets(mx, SIDE_OFFSET, RAY_LENGTH * 0.7, LOS_HEIGHT)
+            local forwardShort = RAY_LENGTH * 0.7
+            local leftxw = sxw + activeForwardX * forwardShort - activeRightX * SIDE_OFFSET
+            local leftyw = syw + activeForwardY * forwardShort - activeRightY * SIDE_OFFSET
+            local leftzw = szw + activeForwardZ * forwardShort - activeRightZ * SIDE_OFFSET
+            local rightxw = sxw + activeForwardX * forwardShort + activeRightX * SIDE_OFFSET
+            local rightyw = syw + activeForwardY * forwardShort + activeRightY * SIDE_OFFSET
+            local rightzw = szw + activeForwardZ * forwardShort + activeRightZ * SIDE_OFFSET
             local lsx, lsy = getScreenFromWorldPosition(leftxw, leftyw, leftzw)
             local rsx, rsy = getScreenFromWorldPosition(rightxw, rightyw, rightzw)
             if lsx and lsy and sscreenX and sscreenY then
@@ -55,27 +102,20 @@ addEventHandler("onClientRender", root, function()
             end
 
             -- rotating scanner line (full 360 sweep) to simulate driver scanning
-            local ticks = getTickCount() / 1000
-            local angleDeg = (ticks * 360 * SCAN_FREQ) % 360
-            local angleRad = math.rad(angleDeg)
-            -- derive right and forward vectors directly from the matrix rows and normalise them
-            local rightX, rightY, rightZ = mx[1][1], mx[1][2], mx[1][3]
-            local forwardX, forwardY, forwardZ = mx[2][1], mx[2][2], mx[2][3]
-            local rightLen = math.sqrt(rightX * rightX + rightY * rightY + rightZ * rightZ)
-            if rightLen > 0 then
-                rightX, rightY, rightZ = rightX / rightLen, rightY / rightLen, rightZ / rightLen
+            local dirx, diry, dirz
+            local scanXw, scanYw, scanZw = sxw, syw, szw
+            if pursuing and isElement(targetElement) then
+                dirx, diry, dirz = activeForwardX, activeForwardY, activeForwardZ
+            else
+                local ticks = getTickCount() / 1000
+                local angleDeg = (ticks * 360 * SCAN_FREQ) % 360
+                local angleRad = math.rad(angleDeg)
+                local cosA = math.cos(angleRad)
+                local sinA = math.sin(angleRad)
+                dirx = baseForwardX * cosA + baseRightX * sinA
+                diry = baseForwardY * cosA + baseRightY * sinA
+                dirz = baseForwardZ * cosA + baseRightZ * sinA
             end
-            local forwardLen = math.sqrt(forwardX * forwardX + forwardY * forwardY + forwardZ * forwardZ)
-            if forwardLen > 0 then
-                forwardX, forwardY, forwardZ = forwardX / forwardLen, forwardY / forwardLen, forwardZ / forwardLen
-            end
-            -- rotated direction = forward * cos(a) + right * sin(a)
-            local cosA = math.cos(angleRad)
-            local sinA = math.sin(angleRad)
-            local dirx = forwardX * cosA + rightX * sinA
-            local diry = forwardY * cosA + rightY * sinA
-            local dirz = forwardZ * cosA + rightZ * sinA
-            local scanXw, scanYw, scanZw = getMatrixOffsets(mx, 0, 0, LOS_HEIGHT)
             local scanEndX = scanXw + dirx * RAY_LENGTH
             local scanEndY = scanYw + diry * RAY_LENGTH
             local scanEndZ = scanZw + dirz * RAY_LENGTH
