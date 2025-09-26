@@ -104,54 +104,68 @@ function calcNodeLaneOffset ( node, rot, prevNode )
 	return 0, 0
 end
 
-function verifyNodeFlags ( flags, node )
-	if ( not flags ) then
-		return true
-	end
-	if ( not ALLOW_EMERGENCY and flags.emergency ) then
-		return false
-	end
-	if ( not ALLOW_PARKINGS and flags.parking ) then
-		return false
-	end
-	-- if node then
-		-- return node.leftlanes and node.rightlanes and node.leftlanes == node.rightlanes
-	-- end
-	return true
+function verifyNodeFlags ( flags, node, opts )
+        if ( not flags ) then
+                return true
+        end
+        opts = opts or {}
+
+        local allowEmergency = opts.allowEmergency
+        if allowEmergency == nil then
+                allowEmergency = ALLOW_EMERGENCY
+        end
+
+        local allowParking = opts.allowParking
+        if allowParking == nil then
+                allowParking = ALLOW_PARKINGS
+        end
+
+        if ( not allowEmergency and flags.emergency ) then
+                return false
+        end
+        if ( not allowParking and flags.parking ) then
+                return false
+        end
+        -- if node then
+                -- return node.leftlanes and node.rightlanes and node.leftlanes == node.rightlanes
+        -- end
+        return true
 end
 
 -----------------------------
 
-function pathsNodeFindClosest ( x, y, z )
-	local areaID = getAreaFromPos ( x, y, z )
-	local minDist, minNode
-	local nodeX, nodeY, dist
-	-- for id,node in pairs( AREA_PATHS[areaID] ) do
-	for id,node in pairs( AREA_PATHS_ALL[areaID].veh ) do
-		nodeX, nodeY = node.x, node.y
-		dist = (x - nodeX)*(x - nodeX) + (y - nodeY)*(y - nodeY)
-		if not minDist or dist < minDist then
-			minDist = dist
-			minNode = node
-		end
-	end
-	return minNode
+function pathsNodeFindClosest ( x, y, z, opts )
+        local areaID = getAreaFromPos ( x, y, z )
+        local minDist, minNode
+        local nodeX, nodeY, dist
+        -- for id,node in pairs( AREA_PATHS[areaID] ) do
+        for id,node in pairs( AREA_PATHS_ALL[areaID].veh ) do
+                if verifyNodeFlags(node.flags, node, opts) then
+                        nodeX, nodeY = node.x, node.y
+                        dist = (x - nodeX)*(x - nodeX) + (y - nodeY)*(y - nodeY)
+                        if not minDist or dist < minDist then
+                                minDist = dist
+                                minNode = node
+                        end
+                end
+        end
+        return minNode
 end
 
-function pathsNodeGetNeighbours ( nodeID, debug )
-	local node = getNode ( nodeID )
-	if ( debug ) then outputChatBox ( "pathsNodeGetNeighbours > nodeID: "..tostring ( nodeID ) ) end
-	local sorted = {}
-	local count = 0
-	-- for n, d in pairs ( node.neighbours or {} ) do
-	for n, d in pairs ( node.nbs or {} ) do
-		local node = getNode(n)
-		if ( verifyNodeFlags ( node.flags ) ) then
-			sorted[n] = d
-			count = count + 1
-		elseif ( debug ) then
-			outputChatBox ( "pathsNodeGetNeighbours > invalid flags "..tostring(n) )
-		end
+function pathsNodeGetNeighbours ( nodeID, debug, opts )
+        local node = getNode ( nodeID )
+        if ( debug ) then outputChatBox ( "pathsNodeGetNeighbours > nodeID: "..tostring ( nodeID ) ) end
+        local sorted = {}
+        local count = 0
+        -- for n, d in pairs ( node.neighbours or {} ) do
+        for n, d in pairs ( node.nbs or {} ) do
+                local node = getNode(n)
+                if ( verifyNodeFlags ( node.flags, node, opts ) ) then
+                        sorted[n] = d
+                        count = count + 1
+                elseif ( debug ) then
+                        outputChatBox ( "pathsNodeGetNeighbours > invalid flags "..tostring(n) )
+                end
 	end
 	-- if count > 2 then
 		-- for n, d in pairs(sorted) do
@@ -166,44 +180,44 @@ function pathsNodeGetNeighbours ( nodeID, debug )
 	return sorted
 end
 
-function pathsFindNextNode(nodeID, ignored)
-	local possibleNeighbours = {}
-	local node = getNode(nodeID)
-	for _,naviID in pairs(node.navinbs) do
-		local naviNode = getNaviNode(naviID)
-		-- outputDebugString(tostring(naviID).." "..tostring(naviNode))
-		if naviNode then
-			if (naviNode.nb == node.id) then
-				if (naviNode.rightlanes >= naviNode.leftlanes) then
-					for neighbourID, dist in pairs(node.nbs) do
-						if (neighbourID ~= ignored) then
-							local neighbourNode = getNode(neighbourID)
-							if (verifyNodeFlags(neighbourNode.flags)) then
-								for _,nbnaviID in pairs(neighbourNode.navinbs) do
-									if (naviID == nbnaviID) then
-										table.insert(possibleNeighbours,neighbourNode)
-									end
-								end
+function pathsFindNextNode(nodeID, ignored, opts)
+        local possibleNeighbours = {}
+        local node = getNode(nodeID)
+        for _,naviID in pairs(node.navinbs) do
+                local naviNode = getNaviNode(naviID)
+                -- outputDebugString(tostring(naviID).." "..tostring(naviNode))
+                if naviNode then
+                        if (naviNode.nb == node.id) then
+                                if (naviNode.rightlanes >= naviNode.leftlanes) then
+                                        for neighbourID, dist in pairs(node.nbs) do
+                                                if (neighbourID ~= ignored) then
+                                                        local neighbourNode = getNode(neighbourID)
+                                                        if (verifyNodeFlags(neighbourNode.flags, neighbourNode, opts)) then
+                                                                for _,nbnaviID in pairs(neighbourNode.navinbs) do
+                                                                        if (naviID == nbnaviID) then
+                                                                                table.insert(possibleNeighbours,neighbourNode)
+                                                                        end
+                                                                end
 							end
 						end
 					end
 				end
 			else
-				if (naviNode.rightlanes <= naviNode.leftlanes) then
-					if (naviNode.nb ~= ignored) then
-						local neighbourNode = getNode(naviNode.nb)
-						if (verifyNodeFlags(neighbourNode.flags)) then
-							table.insert(possibleNeighbours,getNode(naviNode.nb))
-						end
-					end
-				end
+                                if (naviNode.rightlanes <= naviNode.leftlanes) then
+                                        if (naviNode.nb ~= ignored) then
+                                                local neighbourNode = getNode(naviNode.nb)
+                                                if (verifyNodeFlags(neighbourNode.flags, neighbourNode, opts)) then
+                                                        table.insert(possibleNeighbours,getNode(naviNode.nb))
+                                                end
+                                        end
+                                end
 			end
 		else
 			---[[ wtf why can there even be cases where nodes do not exist FUUU
 			for neighbourID, dist in pairs(node.nbs) do
 				if (neighbourID ~= ignored) then
 					local neighbourNode = getNode(neighbourID)
-					if (verifyNodeFlags(neighbourNode.flags)) then
+                                        if (verifyNodeFlags(neighbourNode.flags, neighbourNode, opts)) then
 						table.insert(possibleNeighbours,neighbourNode)
 					end
 				end
