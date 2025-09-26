@@ -61,6 +61,17 @@ SPEED_TURNING = {
 VEH_CREATED = "v_1"
 VEH_REWARP = "v_2"
 
+-- Ensure custom events are registered before any server-side triggers run.
+-- When the resource is (re)started the server can immediately trigger
+-- VEH_CREATED for connected players.  If the client hasn't called addEvent
+-- yet, the trigger fails with "event not added clientside" and the spawned
+-- traffic vehicles never begin processing.  Registering the events here keeps
+-- them available as soon as the shared definitions are loaded.
+if addEvent then
+	addEvent(VEH_CREATED, true)
+	addEvent(VEH_REWARP, true)
+end
+
 if ( getLocalPlayer ) then
 	addCommandHandler("toggledebug", function()
 		DEBUG = not DEBUG
