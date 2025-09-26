@@ -125,7 +125,7 @@ addCommandHandler("ramcar", function(player, cmd, arg)
     triggerClientEvent(VEH_CREATED, ped, node.id, next.id)
 
     -- Track this rammer and start update timer
-    RAMMERS[veh] = { owner = player, target = player, ramDist = ramDist, lastKnown = nil, avoiding = false, uTurning = false, pursuing = false, routingToLast = false, stuckSince = nil, lastStuckTurnLeft = nil }
+    RAMMERS[veh] = { owner = player, target = player, ramDist = ramDist, lastKnown = nil, avoiding = false, uTurning = false, pursuing = false, routingToLast = false, stuckSince = nil, lastStuckTurnLeft = nil, lastAvoidTurnLeft = false }
     RAMMER_BY_OWNER[player] = veh
 
     RAMMERS[veh].timer = setTimer(function()
@@ -316,37 +316,57 @@ addCommandHandler("ramcar", function(player, cmd, arg)
         -- If a non-player vehicle blocks the path, attempt a short reverse+turn maneuver
         if not info.avoiding and not info.uTurning then
             local matrix = getElementMatrix(veh)
-            local fx, fy, fz = getMatrixOffsets(matrix, 0, 1.5, 0)
-            local okf, hitFront = pcall(processLineOfSight, fx, fy, fz + 0.5, fx + (matrix[1][1] * 3), fy + (matrix[2][1] * 3), fz + (matrix[3][1] * 3), true, true, true, true, true, true, true, true, veh)
-            if not okf then hitFront = nil end
-            if hitFront and isElement(hitFront) then
-                local htype = getElementType(hitFront)
+            local sx, sy, sz = getMatrixOffsets(matrix, 0, 1.5, 0)
+            local ex, ey, ez = getMatrixOffsets(matrix, 0, 4.5, 0)
+            local okf, hit, hitX, hitY, hitZ, hitElement = pcall(processLineOfSight, sx, sy, sz + 0.5, ex, ey, ez + 0.5, true, true, true, true, true, true, true, true, veh)
+            if not okf then
+                hit = false
+                hitElement = nil
+                hitX, hitY, hitZ = nil, nil, nil
+            end
+            if hit and hitElement and isElement(hitElement) then
+                local htype = getElementType(hitElement)
                 -- ignore players and peds (they may be the target). If it's a vehicle, check that it's not the player's vehicle
                 local isPlayerVehicle = false
                 if htype == "vehicle" then
-                    local controller = getVehicleController(hitFront)
+                    local controller = getVehicleController(hitElement)
                     if controller == player then
                         isPlayerVehicle = true
                     end
                 end
-                if htype == "vehicle" and hitFront ~= veh and not isPlayerVehicle then
+                if htype == "vehicle" and hitElement ~= veh and not isPlayerVehicle then
                     -- only avoid if it's not the target vehicle and it's close
-                local hx, hy, hz = getElementPosition(hitFront)
-                local relx, rely = hx - vx, hy - vy
-                -- decide turn direction based on obstacle position
-                local turnLeft = (rely > 0)
-                info.avoiding = true
-                -- set reverse and turning for a short burst
-                controls.brake_reverse = true
-                controls.accelerate = false
-                controls.handbrake = false
-                controls.vehicle_left = turnLeft
-                controls.vehicle_right = not turnLeft
-                -- schedule end of avoidance state
-                if info.avoidTimer and isTimer(info.avoidTimer) then killTimer(info.avoidTimer) end
-                info.avoidTimer = setTimer(function()
-                    if RAMMERS[veh] then RAMMERS[veh].avoiding = false end
-                end, 700, 1)
+                    if not hitX or not hitY or not hitZ then
+                        hitX, hitY, hitZ = getElementPosition(hitElement)
+                    end
+                    local toHitX, toHitY, toHitZ = hitX - vx, hitY - vy, hitZ - vz
+                    -- project onto the vehicle's forward axis to ensure the obstacle is in front of us
+                    local forwardDot = toHitX * matrix[2][1] + toHitY * matrix[2][2] + toHitZ * matrix[2][3]
+                    if forwardDot > 0.2 then
+                        -- decide turn direction using the right vector so we turn away from the obstacle in vehicle space
+                        local sideDot = toHitX * matrix[1][1] + toHitY * matrix[1][2] + toHitZ * matrix[1][3]
+                        local turnLeft
+                        if math.abs(sideDot) < 0.05 then
+                            -- Obstacle is centered; alternate direction to avoid oscillation
+                            turnLeft = not info.lastAvoidTurnLeft
+                        else
+                            -- Positive sideDot => obstacle sits on the vehicle's right, so steer left to pivot away
+                            turnLeft = sideDot > 0
+                        end
+                        info.lastAvoidTurnLeft = turnLeft
+                        info.avoiding = true
+                        -- set reverse and turning for a short burst
+                        controls.brake_reverse = true
+                        controls.accelerate = false
+                        controls.handbrake = false
+                        controls.vehicle_left = turnLeft
+                        controls.vehicle_right = not turnLeft
+                        -- schedule end of avoidance state
+                        if info.avoidTimer and isTimer(info.avoidTimer) then killTimer(info.avoidTimer) end
+                        info.avoidTimer = setTimer(function()
+                            if RAMMERS[veh] then RAMMERS[veh].avoiding = false end
+                        end, 700, 1)
+                    end
                 end
             end
         end

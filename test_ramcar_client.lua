@@ -58,18 +58,23 @@ addEventHandler("onClientRender", root, function()
             local ticks = getTickCount() / 1000
             local angleDeg = (ticks * 360 * SCAN_FREQ) % 360
             local angleRad = math.rad(angleDeg)
-            -- forward and right vectors from matrix
-            -- In this matrix layout, row 2 is the forward axis and row 1 is right/side axis
-            local rx = mx[1][1]
-            local ry = mx[1][2]
-            local rz = mx[1][3]
-            local fx = mx[2][1]
-            local fy = mx[2][2]
-            local fz = mx[2][3]
+            -- derive right and forward vectors directly from the matrix rows and normalise them
+            local rightX, rightY, rightZ = mx[1][1], mx[1][2], mx[1][3]
+            local forwardX, forwardY, forwardZ = mx[2][1], mx[2][2], mx[2][3]
+            local rightLen = math.sqrt(rightX * rightX + rightY * rightY + rightZ * rightZ)
+            if rightLen > 0 then
+                rightX, rightY, rightZ = rightX / rightLen, rightY / rightLen, rightZ / rightLen
+            end
+            local forwardLen = math.sqrt(forwardX * forwardX + forwardY * forwardY + forwardZ * forwardZ)
+            if forwardLen > 0 then
+                forwardX, forwardY, forwardZ = forwardX / forwardLen, forwardY / forwardLen, forwardZ / forwardLen
+            end
             -- rotated direction = forward * cos(a) + right * sin(a)
-            local dirx = fx * math.cos(angleRad) + rx * math.sin(angleRad)
-            local diry = fy * math.cos(angleRad) + ry * math.sin(angleRad)
-            local dirz = fz * math.cos(angleRad) + rz * math.sin(angleRad)
+            local cosA = math.cos(angleRad)
+            local sinA = math.sin(angleRad)
+            local dirx = forwardX * cosA + rightX * sinA
+            local diry = forwardY * cosA + rightY * sinA
+            local dirz = forwardZ * cosA + rightZ * sinA
             local scanXw, scanYw, scanZw = getMatrixOffsets(mx, 0, 0, LOS_HEIGHT)
             local scanEndX = scanXw + dirx * RAY_LENGTH
             local scanEndY = scanYw + diry * RAY_LENGTH
