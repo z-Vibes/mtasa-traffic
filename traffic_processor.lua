@@ -6,7 +6,10 @@ DISTANCE_NODEREMOVE = 6
 CURVE_INTERPOLATION = 45
 
 function pedInitialize ( ped, node, next )
-	_peds[ped] = {}
+        HORN_STARTTIME[ped] = nil
+        HORN_STARTTIMELONG[ped] = nil
+
+        _peds[ped] = {}
 	_peds[ped].panic = false
 	_peds[ped].sync = false
 	_peds[ped].queue = {}

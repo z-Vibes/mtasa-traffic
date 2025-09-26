@@ -90,9 +90,11 @@ addEventHandler ( VEH_CREATED, _root, function ( node, next )
 end )
 
 addEventHandler ( "onClientElementDestroy", getResourceRootElement(), function()
-	if ( _peds[source] ) then
-		_peds[source] = nil
-	end
+        if ( _peds[source] ) then
+                _peds[source] = nil
+                HORN_STARTTIME[source] = nil
+                HORN_STARTTIMELONG[source] = nil
+        end
 end )
 
 function pedProcessSyncer ( ped )
