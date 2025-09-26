@@ -56,18 +56,17 @@ addEventHandler ( "onResourceStart", _local, function ()
 			createVehicleOnNodes ( preload.node, preload.next, preload.syncer )
 			table.remove ( TRAFFIC_PRELOADER, 1 )
 		end
-		local unload = TRAFFIC_UNLOADER[1]
-		if unload then
-			-- outputDebugString("UNLOAD: "..tostring(unload).." "..tostring(getElementType(unload)).." "..tostring(destroyElement(unload)))
-			destroyElement(unload)
-			table.remove(TRAFFIC_UNLOADER, 1)
-			for veh in pairs ( TRAFFIC_VEHICLES ) do
-				if veh == unload then
-					TRAFFIC_VEHICLES[veh] = nil
-					outputDebugString("UNLOAD: "..tostring(unload))
-				end
-			end
-		end	
+                local unload = TRAFFIC_UNLOADER[1]
+                if unload then
+                        table.remove(TRAFFIC_UNLOADER, 1)
+                        if TRAFFIC_VEHICLES[unload] then
+                                TRAFFIC_VEHICLES[unload] = nil
+                                outputDebugString("UNLOAD: "..tostring(unload))
+                        end
+                        if isElement(unload) then
+                                destroyElement(unload)
+                        end
+                end
 	end, 100, 0 )
 	
 	setTimer ( function ()
@@ -132,12 +131,16 @@ addEventHandler ("onPlayerFinishedDownloadTraffic", _root,
 addEventHandler ( "onVehicleExplode", root,
 	function()
 		outputDebugString("EXPLODE: "..tostring(source))
-		setTimer(
-			function(veh)
-				destroyElement(veh)
-				table.insert(TRAFFIC_UNLOADER, veh)
-			end
-		, 3000, 1, source)
+                setTimer(
+                        function(veh)
+                                if TRAFFIC_VEHICLES[veh] then
+                                        TRAFFIC_VEHICLES[veh] = nil
+                                end
+                                if isElement(veh) then
+                                        destroyElement(veh)
+                                end
+                        end
+                , 3000, 1, source)
 	end
 )
 
@@ -242,6 +245,9 @@ setTimer(function()
                                                 if deucerto >= contajogadores then
                                                         --outputChatBox("distancia correta:"..deucerto)
                                                         --outputChatBox("numero de jogadores:"..contajogadores)
+                                                        if TRAFFIC_VEHICLES[vehi] then
+                                                                TRAFFIC_VEHICLES[vehi] = nil
+                                                        end
                                                         destroyElement(vehi)
                                                         --outputChatBox("veh deleted")
                                                 end
