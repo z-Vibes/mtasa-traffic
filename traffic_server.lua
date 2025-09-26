@@ -224,33 +224,31 @@ end
 setTimer(function()
 --checa se não tem ninguém perto do veiculo, se não tem, apaga ele
             for i, vehi in ipairs(getElementsByType("vehicle")) do
-				if getElementData(vehi, "type") == "traffic" then
-					-- skip vehicles that explicitly disabled the traffic AI (rammer test vehicles)
-					if getElementData(vehi, "traffic_enabled") == false then
-						goto continue_vehicle_cleanup
-					end
-					contajogadores = 0
-					local deucerto = 0
-					for i, players in ipairs(getElementsByType("player")) do
-						contajogadores = contajogadores + 1
+                                if getElementData(vehi, "type") == "traffic" then
+                                        -- skip vehicles that explicitly disabled the traffic AI (rammer test vehicles)
+                                        if getElementData(vehi, "traffic_enabled") ~= false then
+                                                contajogadores = 0
+                                                local deucerto = 0
+                                                for i, players in ipairs(getElementsByType("player")) do
+                                                        contajogadores = contajogadores + 1
                         --outputChatBox("tentando apagar")
-						x, y, z = getElementPosition(players)
-						xp, yp, zp = getElementPosition(vehi)
-						if getDistanceBetweenPoints2D(x, y, xp, yp) > 90 then
-							deucerto = deucerto + 1
+                                                        x, y, z = getElementPosition(players)
+                                                        xp, yp, zp = getElementPosition(vehi)
+                                                        if getDistanceBetweenPoints2D(x, y, xp, yp) > 90 then
+                                                                deucerto = deucerto + 1
                             --outputChatBox("testei")
-						end
-					end
-					if deucerto >= contajogadores then
-						--outputChatBox("distancia correta:"..deucerto)
-						--outputChatBox("numero de jogadores:"..contajogadores)
-						destroyElement(vehi)
-						--outputChatBox("veh deleted")
-					end
-				end
-			end
-		::continue_vehicle_cleanup::
-end, 100, 0)
+                                                        end
+                                                end
+                                                if deucerto >= contajogadores then
+                                                        --outputChatBox("distancia correta:"..deucerto)
+                                                        --outputChatBox("numero de jogadores:"..contajogadores)
+                                                        destroyElement(vehi)
+                                                        --outputChatBox("veh deleted")
+                                                end
+                                        end
+                                end
+                        end
+        end, 100, 0)
 
 setTimer(function()
 --checa se não tem ninguém perto do pedestre, se não tem, apaga ele

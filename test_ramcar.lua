@@ -2,15 +2,20 @@
 -- Adds a /ramcar command to spawn a traffic vehicle that will pathfollow and try to ram the player
 
 local RAMMERS = {}
+local RAMMER_BY_OWNER = {}
 
 -- NOTE: If Bobcat model ID differs for your server, change BOBcat_MODEL below.
 local BOBCAT_MODEL = 422 -- Bobcat model ID
 
 local DEFAULT_RAM_DISTANCE = 500 -- start trying to ram when closer than this (increased)
 local LOS_CHECK_HEIGHT = 1.2
+local LOS_EXTRA_HEIGHTS = {0.8, 1.5} -- additional heights for fallback LOS checks to better handle hills
 local UPDATE_INTERVAL = 200 -- ms
-local PURSUE_KEEP_TIME = 8000 -- ms to keep pursuing after last seen (used to enter pursue mode)
+local PURSUE_KEEP_TIME = 15000 -- ms to keep pursuing after last seen (used to enter pursue mode)
 local PURSUE_EXIT_DISTANCE = 2000 -- if player farther than this, stop pursuing
+local STUCK_SPEED_THRESHOLD = 0.08 -- below this velocity we consider the rammer stuck
+local STUCK_TIME_MS = 2000 -- must remain under the threshold for this long to trigger recovery
+local STUCK_RECOVERY_MS = 1100 -- duration of the reverse manoeuvre when freeing the vehicle
 
 local function cleanupRammer(veh)
     if not veh then return end
@@ -20,6 +25,9 @@ local function cleanupRammer(veh)
     end
     if info and info.avoidTimer then
         killTimer(info.avoidTimer)
+    end
+    if info and info.owner and RAMMER_BY_OWNER[info.owner] == veh then
+        RAMMER_BY_OWNER[info.owner] = nil
     end
     RAMMERS[veh] = nil
 end
@@ -36,9 +44,30 @@ addEventHandler("onVehicleExplode", root, function()
     end
 end)
 
+addEventHandler("onPlayerQuit", root, function()
+    local veh = RAMMER_BY_OWNER[source]
+    if veh then
+        if isElement(veh) then
+            destroyElement(veh)
+        end
+        cleanupRammer(veh)
+    end
+end)
+
 addCommandHandler("ramcar", function(player, cmd, arg)
     -- arg can be a distance override
     local ramDist = tonumber(arg) or DEFAULT_RAM_DISTANCE
+
+    local existing = RAMMER_BY_OWNER[player]
+    if existing then
+        if isElement(existing) then
+            destroyElement(existing)
+        end
+        cleanupRammer(existing)
+        outputChatBox("Your ramcar has been removed.", player)
+        return
+    end
+
     local px, py, pz = getElementPosition(player)
     local node = pathsNodeFindClosest(px, py, pz)
     if not node then
@@ -96,10 +125,17 @@ addCommandHandler("ramcar", function(player, cmd, arg)
     triggerClientEvent(VEH_CREATED, ped, node.id, next.id)
 
     -- Track this rammer and start update timer
-    RAMMERS[veh] = { owner = player, target = player, ramDist = ramDist, lastKnown = nil, avoiding = false, uTurning = false, pursuing = false, routingToLast = false }
+    RAMMERS[veh] = { owner = player, target = player, ramDist = ramDist, lastKnown = nil, avoiding = false, uTurning = false, pursuing = false, routingToLast = false, stuckSince = nil, lastStuckTurnLeft = nil }
+    RAMMER_BY_OWNER[player] = veh
 
     RAMMERS[veh].timer = setTimer(function()
         if not isElement(veh) or not isElement(player) or getElementType(veh) ~= "vehicle" then
+            cleanupRammer(veh)
+            return
+        end
+
+        local info = RAMMERS[veh]
+        if not info then
             cleanupRammer(veh)
             return
         end
@@ -116,11 +152,20 @@ addCommandHandler("ramcar", function(player, cmd, arg)
         end
     -- treat nil/false as no blocking element -> has LOS
     local hasLOS = (hit == nil or hit == false)
+        if not hasLOS and ok then
+            for _, extra in ipairs(LOS_EXTRA_HEIGHTS) do
+                local ok2, hit2 = pcall(processLineOfSight, vx, vy, vz + LOS_CHECK_HEIGHT + extra, px2, py2, pz2 + LOS_CHECK_HEIGHT + extra, true, true, true, true, true, true, true, true, veh)
+                if ok2 and (hit2 == nil or hit2 == false) then
+                    hasLOS = true
+                    break
+                end
+            end
+        end
         -- if we have LOS, update last known player position and timestamp
         if hasLOS then
-            RAMMERS[veh].lastKnown = { x = px2, y = py2, z = pz2 }
-            RAMMERS[veh].lastSeen = getTickCount()
-            RAMMERS[veh].routingToLast = false
+            info.lastKnown = { x = px2, y = py2, z = pz2 }
+            info.lastSeen = getTickCount()
+            info.routingToLast = false
         end
 
         -- publish hit position for client debug visuals (will be nil when nothing hit)
@@ -137,8 +182,8 @@ addCommandHandler("ramcar", function(player, cmd, arg)
         end
 
         -- publish some state flags so clients can show debug info
-        setElementData(veh, "rammer_pursuing", RAMMERS[veh].pursuing == true, false)
-        setElementData(veh, "rammer_routing", RAMMERS[veh].routingToLast == true, false)
+        setElementData(veh, "rammer_pursuing", info.pursuing == true, false)
+        setElementData(veh, "rammer_routing", info.routingToLast == true, false)
 
         local controls = {
             vehicle_left = false,
@@ -152,31 +197,31 @@ addCommandHandler("ramcar", function(player, cmd, arg)
         local targetX, targetY, targetZ
         -- determine pursuit mode (latch into pursuit once entered; only exit when player is far away)
         local now = getTickCount()
-        local enterPursue = RAMMERS[veh].lastSeen and (now - RAMMERS[veh].lastSeen) <= PURSUE_KEEP_TIME
+        local enterPursue = info.lastSeen and (now - info.lastSeen) <= PURSUE_KEEP_TIME
         -- if already pursuing, keep pursuing unless the player is extremely far away
-        if RAMMERS[veh].pursuing then
+        if info.pursuing then
             if dist > PURSUE_EXIT_DISTANCE then
-                RAMMERS[veh].pursuing = false
+                info.pursuing = false
             end
         else
             if enterPursue then
-                RAMMERS[veh].pursuing = true
+                info.pursuing = true
             end
         end
 
-        local pursuing = RAMMERS[veh].pursuing
+        local pursuing = info.pursuing
 
         -- during active pursuit we increase detection distance
-        local effectiveDist = RAMMERS[veh].ramDist
+        local effectiveDist = info.ramDist
         if pursuing then
             effectiveDist = effectiveDist * 2
         end
 
         if hasLOS and dist <= effectiveDist then
             targetX, targetY, targetZ = px2, py2, pz2
-        elseif RAMMERS[veh].lastKnown then
+        elseif info.lastKnown then
             -- head to last known location when player is not in LOS
-            targetX, targetY, targetZ = RAMMERS[veh].lastKnown.x, RAMMERS[veh].lastKnown.y, RAMMERS[veh].lastKnown.z
+            targetX, targetY, targetZ = info.lastKnown.x, info.lastKnown.y, info.lastKnown.z
         end
 
         if targetX and targetY and targetZ then
@@ -212,8 +257,8 @@ addCommandHandler("ramcar", function(player, cmd, arg)
             -- if we have LOS but are heading strongly away from the target, do a quick U-turn maneuver
             -- compute signed angle (-180..180)
             local signed = ((trot + 180) % 360) - 180
-            if hasLOS and math.abs(signed) > 140 and not RAMMERS[veh].uTurning then
-                RAMMERS[veh].uTurning = true
+            if hasLOS and math.abs(signed) > 140 and not info.uTurning then
+                info.uTurning = true
                 -- choose direction that will point faster toward target
                 local leftDist = (function() local simAngle = (vrot - 60) % 360; local sx = vx + math.cos(math.rad(simAngle)) * 3; local sy = vy + math.sin(math.rad(simAngle)) * 3; return getDistanceBetweenPoints2D(sx, sy, targetX, targetY) end)()
                 local rightDist = (function() local simAngle = (vrot + 60) % 360; local sx = vx + math.cos(math.rad(simAngle)) * 3; local sy = vy + math.sin(math.rad(simAngle)) * 3; return getDistanceBetweenPoints2D(sx, sy, targetX, targetY) end)()
@@ -237,8 +282,8 @@ addCommandHandler("ramcar", function(player, cmd, arg)
             controls.horn = true
 
             -- aggressive pursuit: if we've lost LOS previously and are routing to last known, ensure the client re-forms path toward that last-known node
-            if (not hasLOS) and RAMMERS[veh].lastKnown and not RAMMERS[veh].routingToLast then
-                local lk = RAMMERS[veh].lastKnown
+            if (not hasLOS) and info.lastKnown and not info.routingToLast then
+                local lk = info.lastKnown
                 local nodeNear = pathsNodeFindClosest(lk.x, lk.y, lk.z)
                 if nodeNear then
                     local nextNode = pathsFindNextNode(nodeNear.id)
@@ -246,7 +291,7 @@ addCommandHandler("ramcar", function(player, cmd, arg)
                         setElementData(veh, "next", nextNode.id)
                         -- trigger client to initialize path following toward this node
                         triggerClientEvent(VEH_CREATED, ped, nodeNear.id, nextNode.id)
-                        RAMMERS[veh].routingToLast = true
+                        info.routingToLast = true
                     end
                 end
             end
@@ -269,7 +314,7 @@ addCommandHandler("ramcar", function(player, cmd, arg)
 
         -- Simple obstacle detection/avoidance in front of the vehicle
         -- If a non-player vehicle blocks the path, attempt a short reverse+turn maneuver
-        if not RAMMERS[veh].avoiding and not RAMMERS[veh].uTurning then
+        if not info.avoiding and not info.uTurning then
             local matrix = getElementMatrix(veh)
             local fx, fy, fz = getMatrixOffsets(matrix, 0, 1.5, 0)
             local okf, hitFront = pcall(processLineOfSight, fx, fy, fz + 0.5, fx + (matrix[1][1] * 3), fy + (matrix[2][1] * 3), fz + (matrix[3][1] * 3), true, true, true, true, true, true, true, true, veh)
@@ -290,7 +335,7 @@ addCommandHandler("ramcar", function(player, cmd, arg)
                 local relx, rely = hx - vx, hy - vy
                 -- decide turn direction based on obstacle position
                 local turnLeft = (rely > 0)
-                RAMMERS[veh].avoiding = true
+                info.avoiding = true
                 -- set reverse and turning for a short burst
                 controls.brake_reverse = true
                 controls.accelerate = false
@@ -298,11 +343,53 @@ addCommandHandler("ramcar", function(player, cmd, arg)
                 controls.vehicle_left = turnLeft
                 controls.vehicle_right = not turnLeft
                 -- schedule end of avoidance state
-                RAMMERS[veh].avoidTimer = setTimer(function()
+                if info.avoidTimer and isTimer(info.avoidTimer) then killTimer(info.avoidTimer) end
+                info.avoidTimer = setTimer(function()
                     if RAMMERS[veh] then RAMMERS[veh].avoiding = false end
                 end, 700, 1)
                 end
             end
+        end
+
+        -- Stuck detection: if the rammer tries to pursue but barely moves, trigger a reverse manoeuvre
+        if targetX and not info.avoiding and not info.uTurning then
+            local velx, vely, velz = getElementVelocity(veh)
+            velx, vely, velz = velx or 0, vely or 0, velz or 0
+            local planarSpeed = math.sqrt(velx * velx + vely * vely)
+            if planarSpeed < STUCK_SPEED_THRESHOLD then
+                if not info.stuckSince then
+                    info.stuckSince = now
+                elseif now - info.stuckSince >= STUCK_TIME_MS then
+                    info.stuckSince = now
+                    local turnLeft = info.lastStuckTurnLeft
+                    if turnLeft == nil then
+                        turnLeft = math.random() < 0.5
+                    else
+                        turnLeft = not turnLeft
+                    end
+                    info.lastStuckTurnLeft = turnLeft
+                    info.avoiding = true
+                    controls.brake_reverse = true
+                    controls.accelerate = false
+                    controls.handbrake = false
+                    controls.vehicle_left = turnLeft
+                    controls.vehicle_right = not turnLeft
+                    if info.avoidTimer and isTimer(info.avoidTimer) then
+                        killTimer(info.avoidTimer)
+                    end
+                    info.avoidTimer = setTimer(function()
+                        local data = RAMMERS[veh]
+                        if data then
+                            data.avoiding = false
+                            data.stuckSince = nil
+                        end
+                    end, STUCK_RECOVERY_MS, 1)
+                end
+            else
+                info.stuckSince = nil
+            end
+        else
+            info.stuckSince = nil
         end
 
         for k, v in pairs(controls) do
@@ -314,7 +401,7 @@ addCommandHandler("ramcar", function(player, cmd, arg)
         -- helps to diagnose why traffic might re-take control)
 
         -- cleanup if far away from owner player for too long AND not actively pursuing
-        if not RAMMERS[veh].pursuing and dist > PURSUE_EXIT_DISTANCE then
+        if not info.pursuing and dist > PURSUE_EXIT_DISTANCE then
             destroyElement(veh)
             cleanupRammer(veh)
         end
