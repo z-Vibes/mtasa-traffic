@@ -1,5 +1,75 @@
 citizens = createTeam ("Citizens", 0, 0, 255 )
 
+local function getSpawnSpeedLimit(node, nextNode)
+        if not node then
+                return 0
+        end
+
+        local targetNode = nextNode or node
+        local baseLimit = SPEED_LIMIT[targetNode.type] or 0
+        local limit = baseLimit
+
+        local flags = targetNode.flags
+        if flags then
+                if flags.parking then
+                        return 0
+                end
+                if flags.highway then
+                        limit = baseLimit + HIGHWAY_SPEED
+                end
+        end
+
+        local currentFlags = node.flags
+        if currentFlags then
+                if currentFlags.parking then
+                        return 0
+                end
+                if currentFlags.highway then
+                        limit = math.max(limit, (SPEED_LIMIT[node.type] or 0) + HIGHWAY_SPEED)
+                end
+        end
+
+        return limit
+end
+
+local function applyInitialVelocity(veh, rotx, rotz, speedLimit)
+        if not veh or not speedLimit or speedLimit <= 0 then
+                return
+        end
+
+        local speedVectorScale = speedLimit / 100
+        local rotXRad = math.rad(rotx or 0)
+        local rotZRad = math.rad(rotz or 0)
+        local cosX = math.cos(rotXRad)
+        local sinX = math.sin(rotXRad)
+        local forwardX = -math.sin(rotZRad) * cosX
+        local forwardY = math.cos(rotZRad) * cosX
+        local forwardZ = sinX
+
+        setElementVelocity(veh, forwardX * speedVectorScale, forwardY * speedVectorScale, forwardZ * speedVectorScale)
+end
+
+local TRAFFIC_CONTROL_DEFAULTS = {
+        vehicle_left = false,
+        vehicle_right = false,
+        brake_reverse = false,
+        accelerate = false,
+        handbrake = false,
+        horn = false,
+}
+
+local function seedInitialControls(ped, veh, shouldAccelerate)
+        if not ped or not veh then
+                return
+        end
+
+        for control, defaultState in pairs(TRAFFIC_CONTROL_DEFAULTS) do
+                local state = control == "accelerate" and shouldAccelerate or defaultState
+                setPedControlState(ped, control, state)
+                setElementData(veh, control, state)
+        end
+end
+
 addEventHandler ( "onResourceStart", _local, function ()
 
 	-- Make sure our definitions exist and match the paths file
@@ -182,45 +252,70 @@ end
 --]]
 
 function createVehicleOnNodes ( node, next )
-	local x, y, z = node.x, node.y, node.z
-	local ped
-	repeat
-		ped = createPed ( math.random ( 9, 264 ), x, y, z, 0, false )
-		setElementData(ped, "BotTeam", getTeamFromName("Citizens"))
-	until ped
-	if ( ped ) then
-		-- createMarker ( node.x, node.y, node.z, "corona", 1, 255, 0, 0, 255 )
-		-- createMarker ( next.x, next.y, next.z, "corona", 1, 0, 0, 255, 255 )
-		local rotz = ( 360 - math.deg ( math.atan2 ( ( next.x - x ), ( next.y - y ) ) ) ) % 360
-		local ox, oy = calcNodeLaneOffset ( next, rotz, node )
-		local x, y = x + ox, y + oy
-		local veh = nil
-		if ( node.type == TYPE_DEFAULT ) then
-			local rotx = math.deg ( math.atan2 ( next.z - z, getDistanceBetweenPoints2D ( next.x, next.y, x, y ) ) )
-			veh = createVehicle ( VEHICLE_TYPES[math.random(1,#VEHICLE_TYPES)], x, y, z + 1, rotx, 0, rotz )
-			--veh = createVehicle ( 431, x, y, z + 1, rotx, 0, rotz )
-		elseif ( node.type == TYPE_BOAT ) then
-			veh = createVehicle ( BOAT_TYPES[math.random(1,#BOAT_TYPES)], x, y, z, 0, 0, rot )
-		end
-		if ( not veh ) then
-			destroyElement ( ped )
-		else
-            setElementData(veh, "type", "traffic")
-			warpPedIntoVehicle ( ped, veh )
-			-- setTimer ( warpPedIntoVehicle, 1000, 1, ped, veh )
-			setElementParent ( ped, veh )
-			if ( DEBUG ) then
-				setElementParent ( createBlipAttachedTo ( ped, 0, 1, 0, 255, 0, 255 ), ped )
-			end
-			setElementData(veh, "next", next.id)
-			-- if syncer then
-				-- setElementSyncer(veh, syncer)
-			-- end
-			triggerClientEvent ( VEH_CREATED, ped, node.id, next.id )
-			return true
-		end
-	end
-	return false
+        if not node then
+                return false
+        end
+
+        local forwardNode = next
+        if not forwardNode or not forwardNode.x then
+                forwardNode = pathsFindNextNode(node.id)
+        end
+
+        if not forwardNode or not forwardNode.x or not forwardNode.id then
+                if DEBUG then
+                        outputDebugString(string.format("TRAFFIC: failed to resolve forward node for %s", tostring(node.id or "?")))
+                end
+                return false
+        end
+
+        local x, y, z = node.x, node.y, node.z
+        local rotz = ( 360 - math.deg ( math.atan2 ( ( forwardNode.x - x ), ( forwardNode.y - y ) ) ) ) % 360
+        local ox, oy = calcNodeLaneOffset ( forwardNode, rotz, node )
+        local spawnX, spawnY = x + ox, y + oy
+
+        local ped
+        repeat
+                ped = createPed ( math.random ( 9, 264 ), x, y, z, 0, false )
+                setElementData(ped, "BotTeam", getTeamFromName("Citizens"))
+        until ped
+        if ( ped ) then
+                -- createMarker ( node.x, node.y, node.z, "corona", 1, 255, 0, 0, 255 )
+                -- createMarker ( forwardNode.x, forwardNode.y, forwardNode.z, "corona", 1, 0, 0, 255, 255 )
+                local veh = nil
+                local rotx = 0
+                if ( node.type == TYPE_DEFAULT ) then
+                        rotx = math.deg ( math.atan2 ( forwardNode.z - z, getDistanceBetweenPoints2D ( forwardNode.x, forwardNode.y, spawnX, spawnY ) ) )
+                        veh = createVehicle ( VEHICLE_TYPES[math.random(1,#VEHICLE_TYPES)], spawnX, spawnY, z + 1, rotx, 0, rotz )
+                        --veh = createVehicle ( 431, x, y, z + 1, rotx, 0, rotz )
+                elseif ( node.type == TYPE_BOAT ) then
+                        veh = createVehicle ( BOAT_TYPES[math.random(1,#BOAT_TYPES)], spawnX, spawnY, z, 0, 0, rotz )
+                end
+                if ( not veh ) then
+                        destroyElement ( ped )
+                else
+                        setElementData(veh, "type", "traffic")
+                        warpPedIntoVehicle ( ped, veh )
+                        -- setTimer ( warpPedIntoVehicle, 1000, 1, ped, veh )
+                        setElementParent ( ped, veh )
+                        if ( DEBUG ) then
+                                setElementParent ( createBlipAttachedTo ( ped, 0, 1, 0, 255, 0, 255 ), ped )
+                        end
+                        setElementData(veh, "next", forwardNode.id)
+                        -- if syncer then
+                                -- setElementSyncer(veh, syncer)
+                        -- end
+                        setVehicleEngineState(veh, true)
+                        local initialSpeedLimit = getSpawnSpeedLimit(node, forwardNode)
+                        local shouldAccelerate = initialSpeedLimit > 0
+                        if node.type == TYPE_DEFAULT then
+                                applyInitialVelocity(veh, rotx, rotz, initialSpeedLimit)
+                        end
+                        seedInitialControls(ped, veh, shouldAccelerate)
+                        triggerClientEvent ( VEH_CREATED, ped, node.id, forwardNode.id )
+                        return true
+                end
+        end
+        return false
 end
 
 
